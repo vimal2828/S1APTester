@@ -120,7 +120,8 @@ typedef enum {
    UE_PDN_DISCONNECT_TIMEOUT_IND,
    UE_PDN_DISCONNECT_REJ,
    UE_FW_ERAB_SETUP_REQ_FAILED_FOR_ERABS,
-   UE_AUTH_FAILURE
+   UE_AUTH_FAILURE,
+   UE_EXT_SERVICE_REQUEST
 }tfwCmd;
 
 typedef enum
@@ -913,6 +914,14 @@ typedef struct ueServiceReq
    ueMtmsi_t ueMtmsi;
    U8 rrcCause;
 }ueserviceReq_t;
+
+typedef struct ueExtServiceReq
+{
+   U8 ue_Id;
+   ueMtmsi_t ueMtmsi;
+   U8 rrcCause;
+   U8 svcType;
+}ueextserviceReq_t;
 
 typedef struct _relCause
 {

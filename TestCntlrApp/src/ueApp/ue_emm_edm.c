@@ -109,6 +109,9 @@ PRIVATE S16 cmEmmDecHdr ARGS((U8* buf, CmEmmMsg* msg));
 PRIVATE S16 cmEmmDecEsmMsg ARGS((U8* buf, U32* indx, CmEmmMsg* msg, U32 len));
 PRIVATE S16 cmEmmDecEpsAtchType ARGS((U8* buf, U32* indx, CmEmmMsg* msg,
                                       U32 len));
+
+PRIVATE S16 cmEmmDecSvcType ARGS((U8* buf, U32* indx, CmEmmMsg* msg, 
+                                      U32 len));
 PRIVATE S16 cmEmmDecNasKsi ARGS((U8* buf, U32* indx, CmEmmMsg* msg, U32 len));
 #ifdef CM_MME
 PRIVATE S16 cmEmmDecKsiSeqNum ARGS((U8* buf, U32* indx, CmEmmMsg* msg,
@@ -166,6 +169,7 @@ PRIVATE S16 cmEmmDecImeisvReq ARGS ((U8* buf, U32* indx, CmEmmMsg* msg, U32 len)
 PRIVATE S16 cmEmmDecRpldNonce ARGS ((U8* buf, U32* indx, CmEmmMsg* msg, U32 len));
 PRIVATE S16 cmEmmDecNonce ARGS ((U8* buf, U32* indx, CmEmmMsg* msg, U32 len));
 
+PRIVATE S16 cmEmmEncSvcType ARGS((U8* buf, U32* indx, CmEmmMsg *msg, U16 *len));
 PRIVATE S16 cmEmmEncEpsAtchType ARGS((U8* buf, U32* indx, CmEmmMsg *msg, U16 *len));
 PRIVATE S16 cmEmmEncOldEpsMi ARGS((U8* buf, U32* indx, CmEmmMsg *msg, U16 *len));
 PRIVATE S16 cmEmmEncUeNwCap ARGS((U8* buf, U32* indx, CmEmmMsg *msg, U16 *len));
@@ -473,7 +477,9 @@ CmEmmEdmMsgFormat emmMsgTab[CM_EMM_MAX_MSG][CM_EMM_MAX_IE] =
 
    /* Extended Service Request */
    {
-      {0, 0, 0, TRUE, 0, NULLP, NULLP, NULLP}
+       {0, EDM_PRES_MANDATORY, EDM_FMTV, FALSE, 4, NULLP, cmEmmEncSvcType, cmEmmDecSvcType},
+       {0, EDM_PRES_MANDATORY, EDM_FMTV, FALSE, 4, NULLP, cmEmmEncNasKsi, cmEmmDecNasKsi},
+       {0, EDM_PRES_MANDATORY, EDM_FMTLV, TRUE, 48, NULLP, cmEmmEncMi, cmEmmDecMi}
    },
 
    /* GUTI Reallocation Command */
@@ -768,7 +774,9 @@ CmEmmEdmMsgFormat emmMsgTab[CM_EMM_MAX_MSG][CM_EMM_MAX_IE] =
 
    /* Extended Service Request */
    {
-      {0, 0, 0, TRUE, 0, NULLP, NULLP, NULLP}
+       {0, EDM_PRES_MANDATORY, EDM_FMTV, FALSE, 4, NULLP, cmEmmEncSvcType, cmEmmDecSvcType},
+       {0, EDM_PRES_MANDATORY, EDM_FMTV, FALSE, 4, NULLP, cmEmmEncNasKsi, cmEmmDecNasKsi},
+       {0, EDM_PRES_MANDATORY, EDM_FMTLV, TRUE, 48, NULLP, cmEmmEncMi, cmEmmDecMi}
    },
 
    /* GUTI Reallocation Command */
@@ -2232,6 +2240,11 @@ U16 *len;
          break;
       }
 #endif /* CM_MME */
+      case CM_EMM_MSG_EXT_SVC_REQ:
+      {
+         mi = &msg->u.extSrvReq.msId;
+         break;
+      }
       default:
       {
          EDM_DBG_ERROR((EDM_PRNTBUF, "Invalid message type (%d)\n",
@@ -2246,8 +2259,9 @@ U16 *len;
       RETVALUE(ROK);
    }
 
-   /* Encode IE Id */
-   if (msg->msgId != CM_EMM_MSG_ID_RSP)
+  /* Encode IE Id */
+   if ((msg->msgId != CM_EMM_MSG_ID_RSP) &&
+       (msg->msgId != CM_EMM_MSG_EXT_SVC_REQ))
    {
       buf[(*indx)++] = CM_EMM_IE_MSID;
    }
@@ -2354,9 +2368,15 @@ U16 *len;
             memcpy(&buf[*indx], &mi->u.tmsi.id, 2);
           *indx += 2;
           */
-         buf[(*indx)++] = (mi->u.tmsi.id >> 8) & 0xff;
+         buf[(*indx)++] |= (mi->u.tmsi.id >> 24) & 0xff;
+         buf[(*indx)++] |= (mi->u.tmsi.id >> 16) & 0xff;
+         buf[(*indx)++] |= (mi->u.tmsi.id >> 8) &  0xff;
+         buf[(*indx)++] |= mi->u.tmsi.id & 0xff;
+         tmpLen += 4;
+
+         /*buf[(*indx)++] = (mi->u.tmsi.id >> 8) & 0xff;
          buf[(*indx)++] = mi->u.tmsi.id & 0xff;
-         tmpLen += 2;
+         tmpLen += 2;*/
 
          /* fill length */
          buf[lenIndx] = tmpLen;
@@ -3016,6 +3036,15 @@ U16 *len;
          case CM_EMM_MSG_TAU_REQ:
             {
                nasKsi = &msg->u.tauReq.nasKsi;
+               /* Encode id */
+               buf[*indx] |= (nasKsi->id << 4);
+               /* Encode TSC */
+               buf[(*indx)++] |= (nasKsi->tsc << 7);
+               break;
+            }
+         case CM_EMM_MSG_EXT_SVC_REQ:
+            {
+               nasKsi = &msg->u.extSrvReq.nasKsi;
                /* Encode id */
                buf[*indx] |= (nasKsi->id << 4);
                /* Encode TSC */
@@ -3807,6 +3836,104 @@ U32 len;
 
 } /* cmEmmDecEpsAtchType */
 
+/* Start of encode functions required in UE */
+/*
+ *
+ *       Fun:   cmEmmEncSvcType
+ *
+ *       Desc:  This function
+ *
+ *       Ret:  ROK - ok; RFAILED - failed
+ *
+ *       Notes: none
+ *
+         File:  cm_emm_edm.c
+ *
+ */
+#ifdef ANSI
+PRIVATE S16 cmEmmEncSvcType
+(
+U8 *buf,
+U32 *indx,
+CmEmmMsg *msg,
+U16 *len
+)
+#else
+PRIVATE S16 cmEmmEncSvcType (buf, indx, msg, len)
+U8 *buf;
+U32 *indx;
+CmEmmMsg *msg;
+U16 *len;
+#endif
+{
+   CmEmmSvcType *svcType;
+
+   EDM_TRC2(cmEmmEncSvcType)
+
+   svcType = &msg->u.extSrvReq.svcType;
+
+   if (!svcType->pres)
+   {
+      EDM_DBG_ERROR((EDM_PRNTBUF, "Mandatory IE missing: Extended Service Type\n"));
+      RETVALUE(RFAILED);
+   }
+
+   /* Encode service type */
+   buf[*indx] = svcType->type;
+
+   /* Encode spare bit */
+   buf[*indx] &= 0xff;
+
+   *len = 4;
+
+   RETVALUE(ROK);
+} /* cmEmmEncSvcType */
+
+/*
+ *
+ *       Fun:
+ *
+ *       Desc:  This function
+ *
+ *       Ret:  ROK - ok; RFAILED - failed
+ *
+ *       Notes: none
+ *
+         File:  cm_emm_edm.c
+ *
+ */
+#ifdef ANSI
+PRIVATE S16 cmEmmDecSvcType
+(
+U8 *buf,
+U32 *indx,
+CmEmmMsg *msg,
+U32 len
+)
+#else
+/* cm_emm_edm_c_001.main_1: modified msg from mem */
+PRIVATE S16 cmEmmDecSvcType (buf, indx, msg, len)
+U8 *buf;
+U32 *indx;
+CmEmmMsg *msg;
+U32 len;
+#endif
+{
+   CmEmmSvcType *svcType;
+
+   EDM_TRC2(cmEmmDecSvcType)
+
+   svcType = &msg->u.extSrvReq.svcType;
+
+   svcType->pres = TRUE;
+
+   svcType->type = buf[*indx] & 0x0f;
+
+   RETVALUE(ROK);
+
+} /* cmEmmDecSvcType */
+
+
 /*
  *
  *       Fun:   
@@ -4201,6 +4328,11 @@ U32 len;
          break;
       }
 #endif /* CM_MME */
+      case CM_EMM_MSG_EXT_SVC_REQ:
+      {
+	 mi = &msg->u.extSrvReq.msId;
+         break;
+      }
       default:
       {
          EDM_DBG_ERROR((EDM_PRNTBUF, "Invalid message type (%d)", msg->msgId));

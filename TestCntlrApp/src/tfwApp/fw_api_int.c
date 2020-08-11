@@ -247,6 +247,52 @@ PUBLIC Void handlServiceReq(ueserviceReq_t* data)
 
 /*
  *
+ *   Fun:   handlExtServiceReq
+ *
+ *   Desc:  This function is used to handle Extended Service request
+ *          from Test Controller
+ *
+ *   Ret:   None
+ *
+ *   Notes: None
+ *
+ *   File:  fw_api_int.c
+ *
+ */
+PUBLIC Void handlExtServiceReq(ueextserviceReq_t* data)
+{
+   FwCb *fwCb = NULLP;
+   UetMessage *uetMsg = NULLP;
+   UeUetExtServiceReq *extUeServiceReq = NULLP;
+
+   FW_GET_CB(fwCb);
+   FW_LOG_ENTERFN(fwCb);
+
+   if(SGetSBuf(fwCb->init.region, fwCb->init.pool,
+       (Data **)&uetMsg, (Size) sizeof(UetMessage)) == ROK) 
+   {
+      cmMemset((U8 *)(uetMsg), 0, sizeof(UetMessage));
+   }
+   else 
+   {
+      RETVOID;
+   }
+   uetMsg->msgType = UE_EXT_SERVICE_REQUEST_TYPE;
+   extUeServiceReq = &uetMsg->msg.ueUetExtServiceReq;
+
+   extUeServiceReq->ueId = data->ue_Id;
+   extUeServiceReq->ueMtmsi.pres = data->ueMtmsi.pres;
+   extUeServiceReq->ueMtmsi.mTmsi = data->ueMtmsi.mTmsi;
+   extUeServiceReq->rrcCause = data->rrcCause;
+   extUeServiceReq->svcType = data->svcType;
+
+   fwSendToUeApp(uetMsg);
+   RETVOID;
+}
+
+
+/*
+ *
  *   Fun:   handlUeCntxtRelReq
  *
  *   Desc:  This function is used to handle Service request
@@ -1990,6 +2036,21 @@ PUBLIC S16 tfwApi
          else
          {
             FW_LOG_ERROR(fwCb, "FAILED TO SEND UE_SERVICE_REQ:ENBAPP "\
+                  "IS NOT UP");
+            ret = RFAILED;
+         }
+         break;
+      }
+      case UE_EXT_SERVICE_REQUEST:
+      {
+         FW_LOG_DEBUG(fwCb, "UE_EXT_SERVICE_REQ");
+         if (fwCb->nbState == ENB_IS_UP)
+         {
+            handlExtServiceReq((ueextserviceReq_t*)msg);
+         }
+         else
+         {
+            FW_LOG_ERROR(fwCb, "FAILED TO SEND UE_EXT_SERVICE_REQ:ENBAPP "\
                   "IS NOT UP");
             ret = RFAILED;
          }

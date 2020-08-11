@@ -209,6 +209,7 @@ typedef enum _ueMsgTypes
    UE_PDN_DISCONNECT_REJ_TYPE,
    UE_ERAB_SETUP_REQ_FAILED_FOR_ERABS,
    UE_AUTH_FAILURE_TYPE,
+   UE_EXT_SERVICE_REQUEST_TYPE
 }UeMsgTypes;
 
 typedef struct _ueEmmEpsAtchType
@@ -561,6 +562,14 @@ typedef struct _ueUetServiceReq
    UeUetMtmsi ueMtmsi;
    U8 rrcCause;
 }UeUetServiceReq;
+
+typedef struct _ueUetExtServiceReq
+{
+   U8 ueId;
+   UeUetMtmsi ueMtmsi;
+   U8 rrcCause;
+   U8 svcType;
+}UeUetExtServiceReq;
 
 typedef struct _ueUetServiceRej
 {
@@ -946,6 +955,7 @@ typedef struct _uetMessage
      UeUetPdnDisconnectRej  ueUetPdnDisconnectRej;
      UeUetErabSetupFailedTosetup ueErabsFailedToSetup;
      UeUetAuthFailure ueUetAuthFailure;
+     UeUetExtServiceReq  ueUetExtServiceReq;
    }msg;
 }UetMessage;
 /* Ue Interface general Structure declerations */

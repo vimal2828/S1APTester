@@ -4610,6 +4610,182 @@ PRIVATE S16 ueSendServiceRequest
    UE_LOG_EXITFN(ueAppCb, ROK);
 }
 
+
+/*
+*
+*       Fun:   ueAppUtlBldExtServiceReq
+*
+*       Desc:  This is build a extended Service Request that is to be sent to
+*              the core network.
+*
+*       Ret:   ROK
+*
+*       Notes: None
+*
+*       File:  ue_app.c
+*
+*/
+PRIVATE S16 ueAppUtlBldExtServiceReq(UeCb *ueCb, U32 mTmsi, U8 svcType, CmNasEvnt **ueEvt)
+{
+   UeAppCb *ueAppCb = NULLP;
+   CmEmmExtServiceReq  *extServiceReq;
+   CmEmmMsg* emmMsg;
+
+   UE_GET_CB(ueAppCb);
+   UE_LOG_ENTERFN(ueAppCb);
+
+   UE_LOG_DEBUG(ueAppCb, "Building extended Service Request");
+
+   /* Allocate memory for pdu */
+   CM_ALLOC_NASEVNT (ueEvt, CM_EMM_PD);
+
+   if(*ueEvt == NULLP)
+   {
+      RETVALUE(RFAILED);
+   }
+   if (cmGetMem(&((*ueEvt)->memCp), sizeof(CmEmmMsg), (Ptr *)&emmMsg) != ROK)
+   {
+      CM_FREE_NASEVNT(ueEvt);
+      RETVALUE(RFAILED);
+   }
+
+   (*ueEvt)->m.emmEvnt = emmMsg;
+   extServiceReq = &((*ueEvt)->m.emmEvnt->u.extSrvReq);
+
+   /*Fill header information*/
+   (*ueEvt)->secHT = CM_NAS_SEC_HDR_TYPE_INT_PRTD;
+
+   emmMsg->protDisc = CM_EMM_PD;
+   emmMsg->secHdrType = CM_EMM_SEC_HDR_TYPE_PLAIN_NAS_MSG;
+   emmMsg->msgId = CM_EMM_MSG_EXT_SVC_REQ;
+
+   /* Fill mandatory IEs */
+   extServiceReq->svcType.pres = TRUE;
+   extServiceReq->svcType.type = svcType;
+
+   /*NAS key set identifier IE*/
+   extServiceReq->nasKsi.pres = TRUE;
+   extServiceReq->nasKsi.id = CM_EMM_NONAS_KEY_AVAILABLE;
+   extServiceReq->nasKsi.tsc = CM_EMM_NASKEYSID_NATIVE_SEC;
+
+   /* TMSI */
+   extServiceReq->msId.pres = TRUE;
+   extServiceReq->msId.type = CM_EMM_MID_TYPE_TMSI;
+   extServiceReq->msId.len = 4;
+   extServiceReq->msId.evenOddInd = UE_EVEN;
+   extServiceReq->msId.u.tmsi.id = mTmsi;
+
+   RETVALUE(ROK);
+} /* ueAppUtlBldExtServiceReq */
+
+/*
+ *
+ *       Fun: ueSendExtServiceRequest
+ *
+ *       Desc:
+ *
+ *       Ret:  ROK - ok; RFAILED - failed
+ *
+ *       Notes: none
+ *
+ *       File:  ue_app.c
+ *
+ */
+PRIVATE S16 ueSendExtServiceRequest
+(
+ UeCb *ueCb,
+ U32 mTmsi,
+ U8 rrcCause,
+ U8  svcType
+)
+{
+   S16 ret = ROK;
+   U8 isPlainMsg = TRUE;
+   UeAppCb *ueAppCb = NULLP;
+   NhuDedicatedInfoNAS nasEncPdu;
+   NbuInitialUeMsg *nbuInitialUeMsg = NULLP;
+   UeAppMsg srcMsg;
+   UeAppMsg dstMsg;
+   CmNasEvnt *extServiceReqEvnt = NULLP;
+
+   UE_GET_CB(ueAppCb);
+   UE_LOG_ENTERFN(ueAppCb);
+
+   UE_LOG_DEBUG(ueAppCb, "Sending UE Extended Service Request message");
+
+   ueCb->ecmCb.state = UE_ECM_CONNECTED;
+   ret = ueAppUtlBldExtServiceReq(ueCb, mTmsi, svcType, &extServiceReqEvnt);
+   if(ROK != ret)
+   {
+      UE_LOG_ERROR(ueAppCb, "Could not build the extended Service request\n");
+      RETVALUE(ret);
+   }
+
+   cmMemset((U8 *)&nasEncPdu, 0, sizeof(NhuDedicatedInfoNAS));
+   nbuInitialUeMsg = (NbuInitialUeMsg *)ueAlloc(sizeof(NbuInitialUeMsg));
+
+   /* Encoding Nas PDU */
+   ret = ueAppEdmEncode(extServiceReqEvnt, &nasEncPdu);
+   if(ret != ROK)
+   {
+      UE_LOG_ERROR(ueAppCb, "Encoding failed");
+      CM_FREE_NASEVNT(&extServiceReqEvnt);
+      RETVALUE(ret);
+   }
+
+   /** Integrity Protected **/
+   if(CM_EMM_SEC_HDR_TYPE_PLAIN_NAS_MSG != extServiceReqEvnt->secHT)
+   {
+      isPlainMsg = FALSE;
+      srcMsg.val = nasEncPdu.val;
+      srcMsg.len = nasEncPdu.len;
+      ret = ueAppCmpUplnkSec(&ueCb->secCtxt, extServiceReqEvnt->secHT, &srcMsg,
+            &dstMsg);
+      if(ROK != ret)
+      {
+         UE_LOG_ERROR(ueAppCb, "Uplink Security Failed");
+         extServiceReqEvnt->pdu = NULLP;
+         CM_FREE_NASEVNT(&extServiceReqEvnt);
+         EDM_FREE(nasEncPdu.val, CM_MAX_EMM_ESM_PDU);
+         RETVALUE(ret);
+      }
+      EDM_FREE(nasEncPdu.val, CM_MAX_EMM_ESM_PDU);
+      nasEncPdu.val = dstMsg.val;
+      nasEncPdu.len = dstMsg.len;
+   }
+   /** END **/
+   CM_FREE_NASEVNT(&extServiceReqEvnt);
+
+   /* NB message filling */
+   nbuInitialUeMsg->ueId        = ueCb->ueId;
+   nbuInitialUeMsg->rrcCause    = rrcCause;
+
+   nbuInitialUeMsg->stmsi.pres  = TRUE;
+   nbuInitialUeMsg->stmsi.mmec  = ueCb->ueCtxt.ueGuti.mmeCode;
+   nbuInitialUeMsg->stmsi.mTMSI = mTmsi;
+
+   nbuInitialUeMsg->nasPdu.pres = TRUE;
+   nbuInitialUeMsg->nasPdu.len  = nasEncPdu.len;
+   nbuInitialUeMsg->nasPdu.val = (U8 *)ueAlloc(nbuInitialUeMsg->nasPdu.len);
+   cmMemcpy((U8 *)nbuInitialUeMsg->nasPdu.val, (U8 *)nasEncPdu.val,
+         nbuInitialUeMsg->nasPdu.len);
+
+   if(isPlainMsg)
+   {
+      EDM_FREE(nasEncPdu.val, CM_MAX_EMM_ESM_PDU);
+   }
+
+   ret = ueSendInitialUeMsg(nbuInitialUeMsg, &ueAppCb->nbPst);
+   if (ret != ROK)
+   {
+      UE_LOG_ERROR(ueAppCb, "Could not Send the Extended Service request");
+      RETVALUE(RFAILED);
+   }
+
+   UE_LOG_EXITFN(ueAppCb, ROK);
+}
+
+
 /*
  *
  *       Fun: ueProcUePdnConReq
@@ -5113,6 +5289,70 @@ PRIVATE S16 ueProcUeServiceRequest
 
    UE_LOG_EXITFN(ueAppCb, ret);
 } /* End of ueProcUeServiceRequest */
+
+/*
+ *
+ *       Fun: ueProcUeExtServiceRequest
+ *
+ *       Desc:
+ *
+ *       Ret:  ROK - ok; RFAILED - failed
+ *
+ *       Notes: none
+ *
+ *       File:  ue_app.c
+ *
+ */
+PRIVATE S16 ueProcUeExtServiceRequest
+(
+ UetMessage *p_ueMsg,
+ Pst *pst
+)
+{
+   S16 ret = ROK;
+   U8  ueId = 0;
+   U32 mTmsi = 0;
+   U8 rrcCause = 0;
+   U8 svcType = 0;
+
+   UeAppCb *ueAppCb = NULLP;
+   UeCb *ueCb = NULLP;
+
+   UE_GET_CB(ueAppCb);
+   UE_LOG_ENTERFN(ueAppCb);
+
+   UE_LOG_DEBUG(ueAppCb, "Recieved Ue Extended Service Request");
+   ueId = p_ueMsg->msg.ueUetExtServiceReq.ueId;
+
+   rrcCause = p_ueMsg->msg.ueUetExtServiceReq.rrcCause;
+   ret = ueDbmFetchUe(ueId, (PTR *)&ueCb);
+   if( ret != ROK )
+   {
+      UE_LOG_ERROR(ueAppCb, "UeCb List NULL ueId = %d", ueId);
+   }
+
+   if(p_ueMsg->msg.ueUetExtServiceReq.ueMtmsi.pres == TRUE)
+   {
+      mTmsi = p_ueMsg->msg.ueUetExtServiceReq.ueMtmsi.mTmsi;
+   }
+   else
+   {
+      mTmsi = ueCb->ueCtxt.ueGuti.mTMSI;
+   }
+
+   /* Service Type */
+   svcType = p_ueMsg->msg.ueUetExtServiceReq.svcType; 
+
+   ret = ueSendExtServiceRequest(ueCb, mTmsi, rrcCause, svcType);
+   if (ret != ROK)
+   {
+      UE_LOG_ERROR(ueAppCb, "Sending Extended Service Request message failed");
+   }
+
+   UE_LOG_EXITFN(ueAppCb, ret);
+} /* End of ueProcUeExtServiceRequest */
+
+
 /*
  *
  *       Fun: ueSendUeRadCapInd
@@ -5435,6 +5675,12 @@ PUBLIC S16 ueUiProcessTfwMsg(UetMessage *p_ueMsg, Pst *pst)
       {
          UE_LOG_DEBUG(ueAppCb, "RECEIVED UE SERVICE REQUEST FROM TFWAPP");
          ret = ueProcUeServiceRequest(p_ueMsg, pst);
+         break;
+      }
+      case UE_EXT_SERVICE_REQUEST_TYPE:
+      {
+         UE_LOG_DEBUG(ueAppCb, "RECEIVED UE EXTENDED SERVICE REQUEST FROM TFWAPP");
+         ret = ueProcUeExtServiceRequest(p_ueMsg, pst);
          break;
       }
       case UE_PDN_CON_REQ_TYPE:

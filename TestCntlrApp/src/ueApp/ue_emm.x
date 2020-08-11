@@ -1059,6 +1059,22 @@ typedef struct cmEmmSatus
 } CmEmmStatus;
 
 /* Extended Service Request */
+/*
+IEI Information Element              Presence   Format   Length
+    Protocol discriminator             M           V       1/2
+    Security header type               M           V       1/2
+    ExtSrvcRequest message identity    M           V       1
+    Service Type                       M           V       1/2
+    NAS key set identifier             M           V       1/2
+    M-TMSI                             M           LV      6
+*/
+typedef struct cmEmmExtServiceReq
+{
+  CmEmmSvcType svcType;
+  CmEmmNasKsi  nasKsi;
+  CmEmmMI      msId;
+}CmEmmExtServiceReq;
+
 
 /* GUTI Reallocation Command */
 
@@ -1303,6 +1319,7 @@ typedef struct cmEmmMsg
      CmEmmTAUAccept      tauAcc;
      CmEmmTAUReject      tauRej;
      CmEmmInformation    emmInformation;
+     CmEmmExtServiceReq  extSrvReq;
    }u;
 } CmEmmMsg;
 
